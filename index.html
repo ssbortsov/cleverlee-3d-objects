@@ -99,6 +99,20 @@ const fx = () => ({ pixel:+$('px').value, offset:$('off').value/100, range:$('rn
 const ls = { get(k, d){ try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch(e){ return d; } },
              set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} } };
 
+// Uploaded models live in IndexedDB (this browser only), so they survive a reload
+const db = new Promise((ok, fail) => {
+  const r = indexedDB.open('c3d', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('models', { keyPath:'id' });
+  r.onsuccess = () => ok(r.result); r.onerror = () => fail(r.error);
+});
+const store = async (mode, f) => {
+  try { const t = (await db).transaction('models', mode), q = f(t.objectStore('models'));
+        return await new Promise((ok, fail) => { t.oncomplete = () => ok(q && q.result); t.onerror = () => fail(t.error); }); }
+  catch(e){ return null; }
+};
+const saveLocal = m => store('readwrite', s => s.put({ id:m.id, slug:m.slug, name:m.name, buf:m.buf, modelRotation:m.modelRotation, tilt:m.tilt, fit:m.fit, added:m.added }));
+const dropLocal = m => store('readwrite', s => s.delete(m.id));
+
 let MODELS = [], hidden = ls.get('c3d:hidden', []), h = null, current = null, seq = 0;
 const visible = () => MODELS.filter(m => !hidden.includes(m.id));
 
@@ -126,7 +140,7 @@ async function show(m){
 
 function remove(m){
   const i = visible().indexOf(m);
-  if(m.local) MODELS.splice(MODELS.indexOf(m), 1);
+  if(m.local){ MODELS.splice(MODELS.indexOf(m), 1); dropLocal(m); }
   else { hidden.push(m.id); ls.set('c3d:hidden', hidden); }
   if(current === m){ const rest = visible(); show(rest[Math.min(i, rest.length - 1)] || null); } else renderNav();
 }
@@ -136,7 +150,7 @@ function renderNav(){
   visible().forEach(m => {
     const tab = document.createElement('div'); tab.className = 'tab' + (m === current ? ' on' : '');
     const b = document.createElement('button'); b.textContent = m.name + (m.local ? ' ·' : '');
-    if(m.local) b.title = 'Локальный просмотр: пропадёт после перезагрузки';
+    if(m.local) b.title = 'Свой файл: хранится только в этом браузере';
     b.setAttribute('aria-pressed', m === current); b.onclick = () => show(m);
     const x = document.createElement('button'); x.className = 'x'; x.textContent = '×';
     x.title = 'Убрать вкладку'; x.setAttribute('aria-label', 'Убрать «' + m.name + '»'); x.onclick = () => remove(m);
@@ -157,8 +171,9 @@ async function addFile(f){
   if(!/\.glb$/i.test(f.name)){ showErr('Нужен файл .glb'); return; }
   const slug = f.name.replace(/\.glb$/i, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'model';
   const m = { id:'local-' + Date.now(), slug, name:f.name.replace(/\.glb$/i,'').slice(0,28), buf: await f.arrayBuffer(),
-              modelRotation:[0,0,0], tilt:[0.2,0,0], fit:2.2, local:true };
+              modelRotation:[0,0,0], tilt:[0.2,0,0], fit:2.2, local:true, added:Date.now() };
   MODELS.push(m); show(m);
+  if(await saveLocal(m) === null) setStatus('не удалось сохранить в браузере — пропадёт после перезагрузки');
 }
 $('file').addEventListener('change', e => { addFile(e.target.files[0]); e.target.value = ''; });
 let depth = 0;
@@ -168,7 +183,7 @@ addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); depth = 0; $('drop').hidden = true; addFile(e.dataTransfer.files[0]); });
 
 document.querySelectorAll('#orient .btn[data-ax]').forEach(b => b.onclick = () => {
-  const r = current.modelRotation = current.modelRotation.slice(); r[+b.dataset.ax] = +(r[+b.dataset.ax] + Math.PI/2).toFixed(4); show(current);
+  const r = current.modelRotation = current.modelRotation.slice(); r[+b.dataset.ax] = +(r[+b.dataset.ax] + Math.PI/2).toFixed(4); saveLocal(current); show(current);
 });
 $('copy').onclick = async () => {
   const m = current, entry = { id:m.slug, name:m.name, file:'models/' + m.slug + '.glb', modelRotation:m.modelRotation, tilt:m.tilt, fit:m.fit, credit:'' };
@@ -338,6 +353,8 @@ try {
   const r = await fetch('models.json', { cache:'no-cache' });
   MODELS = await r.json();
 } catch(e){ showErr('Не удалось прочитать models.json: ' + e.message); }
+const locals = await store('readonly', s => s.getAll());
+if(locals) MODELS.push(...locals.sort((a, b) => a.added - b.added).map(m => ({ ...m, local:true })));
 const last = ls.get('c3d:model', null);
 show(visible().find(m => m.id === last) || visible()[0] || null);
 </script>

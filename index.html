@@ -72,7 +72,7 @@
   <label>диапазон <span class="rng"><input id="rng" type="range" min="20" max="100" value="87" data-default="87"></span></label>
   <label><input id="tile" type="checkbox" checked> плитка 2×2</label>
   <label><input id="spin" type="checkbox" checked> вращение</label>
-  <button class="btn" id="dl" type="button" title="Архив: модуль, модель и код вставки с текущими настройками">скачать для сайта</button>
+  <button class="btn" id="dl" type="button" title="Архив: модуль, модель и код вставки с текущими настройками и ракурсом">скачать для сайта</button>
   <span id="status" aria-live="polite"></span>
   <span id="credit"></span>
   <span id="orient" hidden>ориентация <button class="btn" data-ax="0">X+90°</button><button class="btn" data-ax="1">Y+90°</button><button class="btn" data-ax="2">Z+90°</button> <button class="btn" id="copy">копировать для models.json</button></span>
@@ -203,13 +203,34 @@ $('dl').onclick = async () => {
     const get = async u => { const r = await fetch(u); if(!r.ok) throw new Error(u + ': ' + r.status); return new Uint8Array(await r.arrayBuffer()); };
     const slug = m.slug || m.id, glb = slug + '.glb';
     const [lib, model] = await Promise.all([get('lib/dither-3d.min.js'), m.buf ? new Uint8Array(m.buf.slice(0)) : get(m.file)]);
-    const opts = { model: glb, modelRotation:m.modelRotation || [0,0,0], tilt:m.tilt || [0.2,0,0], fit:m.fit || 2.2, ...fx() };
-    const o = JSON.stringify(opts).replace(/^\{|\}$/g, '').replace(/,"/g, ', "').replace(/"(\w+)":/g, '$1: ');
+    // Everything mount() would use, with the angle and zoom as they are on screen right now
+    const v = h.view(), f = fx();
+    const opts = [
+      ['model', glb, 'путь к модели (от страницы)'],
+      ['modelRotation', m.modelRotation || [0,0,0], 'поворот модели, радианы'],
+      ['tilt', v.tilt, 'стартовый ракурс, радианы'],
+      ['zoom', v.zoom, 'дистанция камеры'],
+      ['fit', m.fit || 2.2, 'размер в кадре'],
+      ['flat', !!m.flat, 'освещение по граням'],
+      ['pixel', f.pixel, 'размер «пикселя», CSS px'],
+      ['offset', f.offset, 'начало шкалы спрайта, 0–1'],
+      ['range', f.range, 'доля шкалы на объект, 0–1'],
+      ['tile', f.tile, 'плитки 2×2'],
+      ['autoSpin', f.autoSpin, 'автовращение'],
+      ['spinSpeed', 0.45, 'скорость вращения, рад/с'],
+      ['zoomMin', 1.8, ''], ['zoomMax', 9, ''],
+      ['interactive', true, 'вращение мышью, зум, двойной клик — сброс к этому ракурсу'],
+      ['wheelZoom', true, 'false — если колесо должно прокручивать страницу']
+    ];
+    const o = opts.map(([k, val, c], i) => {
+      const line = `    ${k}: ${JSON.stringify(val).replace(/,/g, ', ')}${i < opts.length - 1 ? ',' : ''}`;
+      return c ? line.padEnd(40) + ' // ' + c : line;
+    }).join('\n');
     const snippet = `<div id="c3d-${slug}" style="width:100%; height:600px"></div>
 <script type="module">
   import { mount } from './dither-3d.min.js';
   mount(document.getElementById('c3d-${slug}'), {
-    ${o}
+${o}
   });
 </` + `script>`;
     const credit = m.credit ? (m.creditUrl ? `<a href="${esc(m.creditUrl)}">${esc(m.credit)}</a>` : esc(m.credit)) : '';
@@ -268,6 +289,16 @@ document.querySelectorAll('.rng input').forEach(inp => {
   t.onclick = reset; inp.addEventListener('dblclick', reset);
   inp.parentNode.insertBefore(t, inp);
 });
+// Remember effect settings between visits
+const saved = ls.get('c3d:fx', null);
+if(saved){
+  if(saved.pixel != null) $('px').value = saved.pixel;
+  if(saved.offset != null) $('off').value = Math.round(saved.offset * 100);
+  if(saved.range != null) $('rng').value = Math.round(saved.range * 100);
+  if(saved.tile != null) $('tile').checked = saved.tile;
+  if(saved.autoSpin != null) $('spin').checked = saved.autoSpin;
+}
+['px','off','rng','tile','spin'].forEach(id => $(id).addEventListener($(id).type === 'checkbox' ? 'change' : 'input', () => ls.set('c3d:fx', fx())));
 $('px').addEventListener('input', () => h && h.set({ pixel:+$('px').value }));
 $('off').addEventListener('input', () => h && h.set({ offset:$('off').value/100 }));
 $('rng').addEventListener('input', () => h && h.set({ range:$('rng').value/100 }));

@@ -59,7 +59,9 @@
   #copy { border:1px solid var(--line); padding:3px 8px; }
   #copy[hidden] { display:none !important; }
   #dl { border:1px solid var(--line); padding:3px 8px; color:var(--violet); }
-  #dl:disabled { color:var(--muted); cursor:wait; }
+  #dl:disabled, #png:disabled { color:var(--muted); cursor:wait; }
+  #png { border:1px solid var(--line); padding:3px 8px; color:var(--violet); }
+  #ratio { font:inherit; color:var(--ink); background:transparent; border:1px solid var(--line); padding:2px 4px; }
 </style>
 </head>
 <body>
@@ -73,6 +75,10 @@
   <label><input id="tile" type="checkbox" checked> плитка 2×2</label>
   <label><input id="spin" type="checkbox" checked> вращение</label>
   <button class="btn" id="dl" type="button" title="Архив: модуль, модель и код вставки с текущими настройками и ракурсом">скачать для сайта</button>
+  <label>картинка <select id="ratio" aria-label="Пропорции картинки">
+    <option value="9:16">9:16</option><option value="16:9">16:9</option><option value="1:1">1:1</option>
+    <option value="3:4">3:4</option><option value="4:3">4:3</option></select></label>
+  <button class="btn" id="png" type="button" title="PNG на прозрачном фоне, текущий ракурс и настройки">сохранить PNG</button>
   <span id="status" aria-live="polite"></span>
   <span id="credit"></span>
   <span id="orient" hidden>ориентация <button class="btn" data-ax="0">X+90°</button><button class="btn" data-ax="1">Y+90°</button><button class="btn" data-ax="2">Z+90°</button> <button class="btn" id="copy">копировать для models.json</button></span>
@@ -276,6 +282,29 @@ ${m.credit ? `\nПодпись автора модели (обязательна
     document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     setStatus('готово'); setTimeout(() => setStatus(''), 1500);
   } catch(e){ setStatus(''); showErr('Не удалось собрать архив: ' + (e && e.message || e)); }
+  finally { btn.disabled = false; }
+};
+
+// PNG of the current frame on a transparent background. Short side 1080 px;
+// the effect pixel keeps the on-screen density (as many effect pixels across the short side as on screen vertically).
+const SIZES = { '9:16':[1080,1920], '16:9':[1920,1080], '1:1':[1080,1080], '3:4':[1080,1440], '4:3':[1440,1080] };
+const gcd = (a, b) => b ? gcd(b, a % b) : a;
+$('ratio').value = ls.get('c3d:ratio', '9:16');
+if(!SIZES[$('ratio').value]) $('ratio').value = '9:16';
+$('ratio').addEventListener('change', () => ls.set('c3d:ratio', $('ratio').value));
+$('png').onclick = async () => {
+  const m = current; if(!h || !m) return;
+  const btn = $('png'); btn.disabled = true; setStatus('рисую…'); showErr('');
+  try {
+    const [width, height] = SIZES[$('ratio').value], g = gcd(width, height);
+    const target = Math.min(width, height) / (stage.clientHeight / fx().pixel);
+    let cell = 1; for(let d = 1; d <= g; d++) if(g % d === 0 && Math.abs(d - target) < Math.abs(cell - target)) cell = d;
+    const blob = await h.snapshot({ width, height, cell });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `cleverlee-${m.slug || m.id}-${$('ratio').value.replace(':', 'x')}.png`;
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    setStatus('готово'); setTimeout(() => setStatus(''), 1500);
+  } catch(e){ setStatus(''); showErr('Не удалось сохранить картинку: ' + (e && e.message || e)); }
   finally { btn.disabled = false; }
 };
 

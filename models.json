@@ -1,0 +1,21 @@
+[
+  {
+    "id": "hands",
+    "name": "Руки Адама",
+    "file": "models/hands.glb",
+    "modelRotation": [0, 0, 1.5708],
+    "tilt": [0.15, 0, -0.18],
+    "fit": 2.6,
+    "credit": "Руки — Sketchfab, лицензию уточнить"
+  },
+  {
+    "id": "sphere",
+    "name": "Сфера",
+    "file": "models/sphere.glb",
+    "modelRotation": [0, 0, 0],
+    "tilt": [0.3, 0, 0],
+    "fit": 1.55,
+    "credit": "«Beautiful sphere» — 3DMish, CC BY 4.0",
+    "creditUrl": "https://sketchfab.com/3d-models/beautiful-sphere-f7340c6b9dad4b88b84e097bcd53bcd8"
+  }
+]

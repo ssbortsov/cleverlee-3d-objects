@@ -1,0 +1,17 @@
+{
+  "name": "cleverlee-3d-objects",
+  "private": true,
+  "description": "3D objects in the Cleverlee dither/pixel sprite effect",
+  "scripts": {
+    "build": "esbuild lib/dither-3d.src.js --bundle --minify --format=esm --outfile=lib/dither-3d.min.js",
+    "serve": "npx -y serve ."
+  },
+  "devDependencies": {
+    "@gltf-transform/cli": "4.1.1",
+    "@gltf-transform/core": "4.1.1",
+    "@gltf-transform/extensions": "4.1.1",
+    "@gltf-transform/functions": "4.1.1",
+    "esbuild": "0.24.0",
+    "three": "0.169.0"
+  }
+}

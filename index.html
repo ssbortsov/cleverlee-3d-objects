@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Cleverlee — 3D objects</title>
+<meta name="description" content="3D-объекты в пиксельном эффекте на спрайте 55×2">
+<style>
+  /* Layout: full-bleed stage; model switcher top-left, effect controls bottom-left, credit top-right */
+  :root {
+    --bg:#ffffff; --ink:#1d1d1b; --muted:#7a7672; --line:#e7e4e0; --panel:rgba(255,255,255,.9);
+    --yellow:#F5E900; --pink:#F4387A; --violet:#8C03E8;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html,body { margin:0; height:100%; color-scheme:light; background:var(--bg); color:var(--ink); font:13px/1.4 var(--mono); overflow:hidden; }
+  #stage { position:fixed; inset:0; }
+  .panel { position:fixed; background:var(--panel); border:1px solid var(--line); box-sizing:border-box; max-width:calc(100vw - 32px); }
+  #models { top:calc(16px + env(safe-area-inset-top, 0px)); left:max(16px, env(safe-area-inset-left, 0px)); display:flex; flex-wrap:wrap; gap:0; }
+  #models .tab { display:flex; border-right:1px solid var(--line); }
+  #models .tab button { border-right:0; }
+  #models .tab .x { padding:8px 8px 8px 0; color:var(--muted); }
+  #models .tab .x:hover { color:var(--pink); }
+  #models .tab.on { background:var(--ink); }
+  #models .tab.on button { color:var(--bg); }
+  #models .tab.on .x { color:#9d9994; }
+  #models .tab.on .x:hover { color:var(--pink); }
+  #models .restore { color:var(--muted); }
+  #empty { position:fixed; inset:0; display:grid; place-items:center; color:var(--muted); pointer-events:none; text-align:center; padding:0 16px; }
+  #empty[hidden] { display:none !important; }
+  #models button, .btn { font:inherit; color:var(--ink); background:transparent; border:0; border-right:1px solid var(--line); padding:8px 12px; cursor:pointer; }
+  #models button:last-child { border-right:0; }
+  #models button:focus-visible, .btn:focus-visible, input:focus-visible { outline:2px solid var(--violet); outline-offset:-2px; }
+  #models .add { color:var(--violet); }
+  #ui { left:max(16px, env(safe-area-inset-left, 0px)); bottom:calc(16px + env(safe-area-inset-bottom, 0px)); display:flex; gap:14px; flex-wrap:wrap; align-items:center; padding:8px 10px; }
+  #ui label { display:flex; gap:6px; align-items:center; color:var(--muted); }
+  /* sliders: custom track/thumb so the default tick sits exactly under the thumb position */
+  .rng { position:relative; display:inline-flex; align-items:center; width:110px; height:20px; }
+  .rng input[type=range] { -webkit-appearance:none; appearance:none; width:100%; height:20px; margin:0; background:transparent; position:relative; z-index:1; cursor:pointer; }
+  .rng input[type=range]::-webkit-slider-runnable-track { height:2px; background:var(--line); }
+  .rng input[type=range]::-moz-range-track { height:2px; background:var(--line); }
+  .rng input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; margin-top:-6px; border-radius:50%; background:var(--ink); border:0; }
+  .rng input[type=range]::-moz-range-thumb { width:14px; height:14px; border-radius:50%; background:var(--ink); border:0; }
+  .rng .tick { position:absolute; top:1px; width:9px; height:18px; transform:translateX(-50%); padding:0; border:0; background:transparent; cursor:pointer; z-index:0; }
+  .rng .tick::before { content:""; position:absolute; left:4px; top:0; width:1px; height:18px; background:var(--pink); }
+  .rng input:focus-visible { outline:2px solid var(--violet); outline-offset:2px; }
+  #orient { display:flex; gap:4px; align-items:center; color:var(--muted); }
+  #orient[hidden] { display:none !important; }
+  #orient .btn { border:1px solid var(--line); padding:3px 8px; }
+  #credit { color:var(--muted); font-size:11px; overflow-wrap:anywhere; max-width:320px; }
+  #credit:empty, #status:empty { display:none; }
+  #status { color:var(--violet); font-size:11px; }
+  #credit a { color:inherit; }
+  #hint { position:fixed; right:max(16px, env(safe-area-inset-right, 0px)); top:calc(16px + env(safe-area-inset-top, 0px)); color:var(--muted); font-size:11px; text-align:right; max-width:220px; pointer-events:none; }
+  #err { position:fixed; top:64px; left:16px; right:16px; color:#c00; }
+  #drop[hidden], #err[hidden] { display:none !important; }
+  #drop { position:fixed; inset:0; display:grid; place-items:center; background:rgba(245,233,0,.85); font-size:18px; pointer-events:none; }
+  @media (min-width:901px) { #models { max-width:calc(100vw - 32px - 250px); } }
+  @media (max-width:900px) { #hint { display:none; } }
+  #copy { border:1px solid var(--line); padding:3px 8px; }
+  #copy[hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<nav id="models" class="panel" aria-label="Модели"></nav>
+<div id="hint">тяни — вращение · колесо / щипок — зум · двойной клик — сброс</div>
+<div id="ui" class="panel">
+  <label>пиксель <span class="rng"><input id="px" type="range" min="3" max="16" value="4" data-default="4"></span></label>
+  <label>сдвиг <span class="rng"><input id="off" type="range" min="0" max="60" value="18" data-default="18"></span></label>
+  <label>диапазон <span class="rng"><input id="rng" type="range" min="20" max="100" value="87" data-default="87"></span></label>
+  <label><input id="tile" type="checkbox" checked> плитка 2×2</label>
+  <label><input id="spin" type="checkbox" checked> вращение</label>
+  <span id="status" aria-live="polite"></span>
+  <span id="credit"></span>
+  <span id="orient" hidden>ориентация <button class="btn" data-ax="0">X+90°</button><button class="btn" data-ax="1">Y+90°</button><button class="btn" data-ax="2">Z+90°</button> <button class="btn" id="copy">копировать для models.json</button></span>
+</div>
+<div id="err" hidden></div>
+<div id="empty" hidden>Моделей нет. Добавьте .glb кнопкой «+ свой .glb» или перетащите файл сюда.</div>
+<div id="drop" hidden>Отпустите .glb, чтобы посмотреть</div>
+<input id="file" type="file" accept=".glb,model/gltf-binary" hidden>
+
+<script type="module">
+import { mount } from './lib/dither-3d.min.js';
+
+const $ = id => document.getElementById(id);
+const stage = $('stage'), nav = $('models');
+const showErr = m => { $('err').textContent = m || ''; $('err').hidden = !m; };
+const setStatus = t => { $('status').textContent = t || ''; };
+const fx = () => ({ pixel:+$('px').value, offset:$('off').value/100, range:$('rng').value/100, tile:$('tile').checked, autoSpin:$('spin').checked });
+const ls = { get(k, d){ try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch(e){ return d; } },
+             set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} } };
+
+let MODELS = [], hidden = ls.get('c3d:hidden', []), h = null, current = null, seq = 0;
+const visible = () => MODELS.filter(m => !hidden.includes(m.id));
+
+async function show(m){
+  const my = ++seq;
+  if(h){ h.destroy(); h = null; }
+  current = m; showErr('');
+  $('empty').hidden = !!m;
+  const c = $('credit'); c.textContent = '';
+  if(m && m.credit){
+    if(m.creditUrl){ const a = document.createElement('a'); a.href = m.creditUrl; a.target = '_blank'; a.rel = 'noopener'; a.textContent = m.credit; c.append(a); }
+    else c.textContent = m.credit;
+  }
+  $('orient').hidden = !(m && m.local);
+  renderNav();
+  if(!m) return;
+  ls.set('c3d:model', m.id);
+  const opts = { modelRotation:m.modelRotation || [0,0,0], tilt:m.tilt || [0.2,0,0], fit:m.fit || 2.2, ...fx() };
+  if(m.buf) opts.modelData = m.buf.slice(0); else opts.model = m.file;
+  setStatus(m.buf ? '' : 'загружаю…');
+  h = mount(stage, opts);
+  h.ready.then(() => { if(my === seq) setStatus(''); })
+         .catch(e => { if(my === seq){ setStatus(''); showErr('Не удалось открыть модель: ' + (e && e.message || e) + '. Нужен .glb без Draco-сжатия.'); } });
+}
+
+function remove(m){
+  const i = visible().indexOf(m);
+  if(m.local) MODELS.splice(MODELS.indexOf(m), 1);
+  else { hidden.push(m.id); ls.set('c3d:hidden', hidden); }
+  if(current === m){ const rest = visible(); show(rest[Math.min(i, rest.length - 1)] || null); } else renderNav();
+}
+
+function renderNav(){
+  nav.innerHTML = '';
+  visible().forEach(m => {
+    const tab = document.createElement('div'); tab.className = 'tab' + (m === current ? ' on' : '');
+    const b = document.createElement('button'); b.textContent = m.name + (m.local ? ' ·' : '');
+    if(m.local) b.title = 'Локальный просмотр: пропадёт после перезагрузки';
+    b.setAttribute('aria-pressed', m === current); b.onclick = () => show(m);
+    const x = document.createElement('button'); x.className = 'x'; x.textContent = '×';
+    x.title = 'Убрать вкладку'; x.setAttribute('aria-label', 'Убрать «' + m.name + '»'); x.onclick = () => remove(m);
+    tab.append(b, x); nav.append(tab);
+  });
+  const add = document.createElement('button'); add.className = 'add'; add.textContent = '+ свой .glb';
+  add.onclick = () => $('file').click(); nav.append(add);
+  if(hidden.some(id => MODELS.some(m => m.id === id))){
+    const r = document.createElement('button'); r.className = 'restore'; r.textContent = '↺ вернуть скрытые';
+    r.onclick = () => { hidden = []; ls.set('c3d:hidden', hidden); current ? renderNav() : show(visible()[0] || null); };
+    nav.append(r);
+  }
+}
+
+// Local preview of a file (not saved: to keep it, add the file to models/ and an entry to models.json)
+async function addFile(f){
+  if(!f) return;
+  if(!/\.glb$/i.test(f.name)){ showErr('Нужен файл .glb'); return; }
+  const slug = f.name.replace(/\.glb$/i, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'model';
+  const m = { id:'local-' + Date.now(), slug, name:f.name.replace(/\.glb$/i,'').slice(0,28), buf: await f.arrayBuffer(),
+              modelRotation:[0,0,0], tilt:[0.2,0,0], fit:2.2, local:true };
+  MODELS.push(m); show(m);
+}
+$('file').addEventListener('change', e => { addFile(e.target.files[0]); e.target.value = ''; });
+let depth = 0;
+addEventListener('dragenter', e => { e.preventDefault(); depth++; $('drop').hidden = false; });
+addEventListener('dragleave', () => { if(--depth <= 0){ depth = 0; $('drop').hidden = true; } });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { e.preventDefault(); depth = 0; $('drop').hidden = true; addFile(e.dataTransfer.files[0]); });
+
+document.querySelectorAll('#orient .btn[data-ax]').forEach(b => b.onclick = () => {
+  const r = current.modelRotation = current.modelRotation.slice(); r[+b.dataset.ax] = +(r[+b.dataset.ax] + Math.PI/2).toFixed(4); show(current);
+});
+$('copy').onclick = async () => {
+  const m = current, entry = { id:m.slug, name:m.name, file:'models/' + m.slug + '.glb', modelRotation:m.modelRotation, tilt:m.tilt, fit:m.fit, credit:'' };
+  const text = JSON.stringify(entry, null, 2);
+  try { await navigator.clipboard.writeText(text); setStatus('скопировано'); }
+  catch(e){ showErr(text); }
+  setTimeout(() => setStatus(''), 1500);
+};
+
+// Default ticks on sliders
+document.querySelectorAll('.rng input').forEach(inp => {
+  const d = +inp.dataset.default, f = (d - inp.min) / (inp.max - inp.min);
+  const t = document.createElement('button');
+  t.className = 'tick'; t.type = 'button'; t.title = 'по умолчанию: ' + d; t.setAttribute('aria-label', 'Вернуть ' + d);
+  t.style.left = `calc(7px + (100% - 14px) * ${f})`;
+  const reset = () => { inp.value = d; inp.dispatchEvent(new Event('input')); };
+  t.onclick = reset; inp.addEventListener('dblclick', reset);
+  inp.parentNode.insertBefore(t, inp);
+});
+$('px').addEventListener('input', () => h && h.set({ pixel:+$('px').value }));
+$('off').addEventListener('input', () => h && h.set({ offset:$('off').value/100 }));
+$('rng').addEventListener('input', () => h && h.set({ range:$('rng').value/100 }));
+$('tile').addEventListener('change', () => h && h.set({ tile:$('tile').checked }));
+$('spin').addEventListener('change', () => h && h.set({ autoSpin:$('spin').checked }));
+
+try {
+  const r = await fetch('models.json', { cache:'no-cache' });
+  MODELS = await r.json();
+} catch(e){ showErr('Не удалось прочитать models.json: ' + e.message); }
+const last = ls.get('c3d:model', null);
+show(visible().find(m => m.id === last) || visible()[0] || null);
+</script>
+</body>
+</html>

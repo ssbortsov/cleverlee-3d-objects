@@ -58,6 +58,8 @@
   @media (max-width:900px) { #hint { display:none; } }
   #copy { border:1px solid var(--line); padding:3px 8px; }
   #copy[hidden] { display:none !important; }
+  #dl { border:1px solid var(--line); padding:3px 8px; color:var(--violet); }
+  #dl:disabled { color:var(--muted); cursor:wait; }
 </style>
 </head>
 <body>
@@ -70,6 +72,7 @@
   <label>диапазон <span class="rng"><input id="rng" type="range" min="20" max="100" value="87" data-default="87"></span></label>
   <label><input id="tile" type="checkbox" checked> плитка 2×2</label>
   <label><input id="spin" type="checkbox" checked> вращение</label>
+  <button class="btn" id="dl" type="button" title="Архив: модуль, модель и код вставки с текущими настройками">скачать для сайта</button>
   <span id="status" aria-live="polite"></span>
   <span id="credit"></span>
   <span id="orient" hidden>ориентация <button class="btn" data-ax="0">X+90°</button><button class="btn" data-ax="1">Y+90°</button><button class="btn" data-ax="2">Z+90°</button> <button class="btn" id="copy">копировать для models.json</button></span>
@@ -167,6 +170,92 @@ $('copy').onclick = async () => {
   try { await navigator.clipboard.writeText(text); setStatus('скопировано'); }
   catch(e){ showErr(text); }
   setTimeout(() => setStatus(''), 1500);
+};
+
+// Download a zip for embedding: module + model + snippet with the current settings
+const CRC = new Uint32Array(256).map((_, n) => { let c = n; for(let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc32 = b => { let c = ~0; for(let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return ~c >>> 0; };
+function zip(files){ // [{name, data:Uint8Array}] → Blob, stored (no compression)
+  const enc = new TextEncoder(), parts = [], dir = []; let off = 0;
+  const d = new Date(), time = d.getHours() << 11 | d.getMinutes() << 5 | d.getSeconds() >> 1,
+        date = (d.getFullYear() - 1980) << 9 | (d.getMonth() + 1) << 5 | d.getDate();
+  for(const f of files){
+    const name = enc.encode(f.name), crc = crc32(f.data), n = f.data.length;
+    const hdr = (sig, extra) => { const h = new DataView(new ArrayBuffer(extra)); h.setUint32(0, sig, true); return h; };
+    const l = hdr(0x04034b50, 30);
+    l.setUint16(4, 20, true); l.setUint16(6, 0x800, true); l.setUint16(10, time, true); l.setUint16(12, date, true);
+    l.setUint32(14, crc, true); l.setUint32(18, n, true); l.setUint32(22, n, true); l.setUint16(26, name.length, true);
+    const c = hdr(0x02014b50, 46);
+    c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x800, true); c.setUint16(12, time, true); c.setUint16(14, date, true);
+    c.setUint32(16, crc, true); c.setUint32(20, n, true); c.setUint32(24, n, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+    parts.push(l, name, f.data); dir.push(c, name); off += 30 + name.length + n;
+  }
+  const size = dir.reduce((a, x) => a + x.byteLength, 0), e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+  e.setUint32(12, size, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...dir, e], { type:'application/zip' });
+}
+const esc = t => t.replace(/[&<>"]/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[ch]));
+$('dl').onclick = async () => {
+  const m = current; if(!m) return;
+  const btn = $('dl'); btn.disabled = true; setStatus('собираю архив…'); showErr('');
+  try {
+    const get = async u => { const r = await fetch(u); if(!r.ok) throw new Error(u + ': ' + r.status); return new Uint8Array(await r.arrayBuffer()); };
+    const slug = m.slug || m.id, glb = slug + '.glb';
+    const [lib, model] = await Promise.all([get('lib/dither-3d.min.js'), m.buf ? new Uint8Array(m.buf.slice(0)) : get(m.file)]);
+    const opts = { model: glb, modelRotation:m.modelRotation || [0,0,0], tilt:m.tilt || [0.2,0,0], fit:m.fit || 2.2, ...fx() };
+    const o = JSON.stringify(opts).replace(/^\{|\}$/g, '').replace(/,"/g, ', "').replace(/"(\w+)":/g, '$1: ');
+    const snippet = `<div id="c3d-${slug}" style="width:100%; height:600px"></div>
+<script type="module">
+  import { mount } from './dither-3d.min.js';
+  mount(document.getElementById('c3d-${slug}'), {
+    ${o}
+  });
+</` + `script>`;
+    const credit = m.credit ? (m.creditUrl ? `<a href="${esc(m.creditUrl)}">${esc(m.credit)}</a>` : esc(m.credit)) : '';
+    const page = `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(m.name)}</title>
+<style>body{margin:0;font:13px/1.4 ui-monospace,Menlo,monospace;color:#7a7672} p{margin:8px 16px}</style>
+</head>
+<body>
+${snippet}
+${credit ? `<p>${credit}</p>\n` : ''}</body>
+</html>
+`;
+    const readme = `Cleverlee 3D — «${m.name}»
+
+Файлы:
+  index.html        готовая страница с объектом
+  embed.html        фрагмент для вставки в свою страницу
+  dither-3d.min.js  модуль эффекта (Three.js внутри)
+  ${glb.padEnd(17)} модель
+
+Как вставить:
+  1. Положите dither-3d.min.js и ${glb} на свой сервер.
+  2. Вставьте содержимое embed.html в страницу. Если файлы лежат в другой папке,
+     поправьте пути './dither-3d.min.js' и '${glb}' (путь к модели считается от страницы).
+  3. Высоту задаёт style контейнера (сейчас 600px).
+
+Открывать нужно через сервер (http://), а не двойным кликом по файлу:
+браузер не загружает модули с file://. Для проверки: npx serve .
+${m.credit ? `\nПодпись автора модели (обязательна для CC BY): ${m.credit}${m.creditUrl ? ' — ' + m.creditUrl : ''}\n` : ''}`;
+    const enc = new TextEncoder();
+    const blob = zip([
+      { name:'index.html', data:enc.encode(page) },
+      { name:'embed.html', data:enc.encode(snippet + '\n') },
+      { name:'README.txt', data:enc.encode(readme) },
+      { name:'dither-3d.min.js', data:lib },
+      { name:glb, data:model }
+    ]);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'cleverlee-' + slug + '.zip';
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    setStatus('готово'); setTimeout(() => setStatus(''), 1500);
+  } catch(e){ setStatus(''); showErr('Не удалось собрать архив: ' + (e && e.message || e)); }
+  finally { btn.disabled = false; }
 };
 
 // Default ticks on sliders
